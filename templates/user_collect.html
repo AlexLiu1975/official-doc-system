@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>🔓 密件公文領取系統</title>
+    <style>
+        :root { --kmu-green: #2e7d32; --dark-bg: #1a1a1a; }
+        body { font-family: "Microsoft JhengHei", sans-serif; background: var(--dark-bg); color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .collect-card { background: #fff; color: #333; padding: 30px; border-radius: 20px; text-align: center; width: 700px; border-top: 10px solid var(--kmu-green); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+        .icon { font-size: 50px; margin-bottom: 10px; }
+        h1 { font-size: 28px; margin: 10px 0; }
+        
+        /* 輸入框樣式 */
+        .input-box { margin: 20px 0; }
+        #card_input { width: 60%; padding: 12px; font-size: 24px; text-align: center; border: 2px solid #ccc; border-radius: 8px; outline: none; }
+        #card_input:focus { border-color: var(--kmu-green); box-shadow: 0 0 10px rgba(46,125,50,0.2); }
+
+        /* 結果表格樣式 */
+        .result-container { margin-top: 20px; display: none; }
+        .success-banner { color: var(--kmu-green); font-size: 22px; font-weight: bold; margin-bottom: 15px; }
+        table { width: 100%; border-collapse: collapse; color: #333; }
+        th { background: #f4f4f4; padding: 12px; border: 1px solid #ddd; font-size: 14px; }
+        td { padding: 12px; border: 1px solid #ddd; text-align: center; font-size: 16px; }
+        
+        .status-msg { margin-top: 15px; font-weight: bold; color: #666; min-height: 24px; }
+    </style>
+</head>
+<body onclick="document.getElementById('card_input').focus()">
+
+<div class="collect-card">
+    <div class="icon">📑</div>
+    <h1>請掃描識別證條碼</h1>
+    
+    <div class="input-box">
+        <input type="text" id="card_input" placeholder="等待掃描..." autocomplete="off" autofocus>
+    </div>
+
+    <div id="statusMsg" class="status-msg"></div>
+
+    <div id="resultContainer" class="result-container">
+        <div id="successBanner" class="success-banner"></div>
+        <table>
+            <thead>
+                <tr>
+                    <th>收文號</th>
+                    <th>承辦人</th>
+                    <th>領取時間</th>
+                </tr>
+            </thead>
+            <tbody id="resultBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    const cardInput = document.getElementById('card_input');
+    const statusMsg = document.getElementById('statusMsg');
+    const resultContainer = document.getElementById('resultContainer');
+    const resultBody = document.getElementById('resultBody');
+    const successBanner = document.getElementById('successBanner');
+
+    document.addEventListener('click', () => cardInput.focus());
+
+    cardInput.addEventListener('keypress', async (e) => {
+        if (e.key === 'Enter') {
+            const jobNum = cardInput.value.trim();
+            if (!jobNum) return;
+
+            // 初始化介面
+            statusMsg.innerHTML = "🔍 正在處理領取請求...";
+            statusMsg.style.color = "#666";
+            resultContainer.style.display = 'none';
+            cardInput.value = '';
+
+            try {
+                // 發送請求給 Flask
+                const response = await fetch('/api/collect_doc/' + jobNum, { method: 'POST' });
+                const result = await response.json();
+
+                if (response.ok) {
+                    statusMsg.innerHTML = "";
+                    successBanner.innerText = `✅ 職號 ${jobNum} 領取成功！`;
+                    
+                    // 動態產生表格列
+                    resultBody.innerHTML = result.doc_ids.map(id => `
+                        <tr>
+                            <td><strong>${id}</strong></td>
+                            <td>${result.name}</td>
+                            <td>${result.time}</td>
+                        </tr>
+                    `).join('');
+
+                    resultContainer.style.display = 'block';
+                    setTimeout(resetUI, 10000); // 10秒後重置以便下一位領取
+                } else {
+                    statusMsg.innerHTML = "❌ " + (result.message || "無待領公文");
+                    statusMsg.style.color = "#d32f2f";
+                    setTimeout(resetUI, 3000);
+                }
+            } catch (err) {
+                statusMsg.innerHTML = "❌ 系統連線失敗 (請確認 Port 5001 是否運作)";
+                statusMsg.style.color = "#d32f2f";
+                console.error(err);
+            }
+        }
+    });
+
+    function resetUI() {
+        statusMsg.innerHTML = "";
+        resultContainer.style.display = 'none';
+        cardInput.focus();
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📑 密件公文管理系統 - 管理端</title>
+    <style>
+        :root {
+            --primary-red: #d32f2f;
+            --dark-blue: #263238;
+            --light-bg: #f5f7f9;
+            --success-green: #2e7d32;
+        }
+        
+        body {
+            font-family: "Microsoft JhengHei", sans-serif;
+            background: var(--light-bg);
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: auto;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        header {
+            border-bottom: 3px solid var(--primary-red);
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 { color: var(--dark-blue); margin: 0; }
+
+        /* 公文登錄區樣式 */
+        .input-card {
+            background: #fdfdfd;
+            border: 1px solid #e0e0e0;
+            padding: 20px;
+            border-radius: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: flex-end;
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-width: 180px;
+        }
+
+        .form-group label {
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #444;
+            font-size: 14px;
+        }
+
+        input {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        input:focus {
+            border-color: var(--primary-red);
+            outline: none;
+            box-shadow: 0 0 5px rgba(211, 47, 47, 0.2);
+        }
+
+        .btn-submit {
+            padding: 10px 25px;
+            background: var(--primary-red);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            height: 42px;
+        }
+
+        .btn-submit:disabled { background: #ccc; cursor: not-allowed; }
+
+        /* 報表工具列：日期篩選與列印 */
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            background: #eceff1;
+            padding: 15px;
+            border-radius: 8px;
+        }
+
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .filter-group input[type="date"] {
+            padding: 5px;
+        }
+
+        .btn-print {
+            background: #455a64;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .btn-reset {
+            background: white;
+            border: 1px solid #ccc;
+            padding: 5px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        /* 表格樣式 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            background: var(--dark-blue);
+            color: white;
+            padding: 12px;
+            text-align: left;
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status-wait { background: #fff3e0; color: #e65100; border: 1px solid #ffe0b2; }
+        .status-done { background: #e8f5e9; color: #1b5e20; border: 1px solid #c8e6c9; }
+
+        /* --- 列印專用樣式 --- */
+        @media print {
+            .input-card, .toolbar, .btn-submit, header {
+                display: none !important;
+            }
+            body { background: white; padding: 0; }
+            .container { box-shadow: none; width: 100%; max-width: 100%; padding: 0; }
+            table { border: 1px solid #000; }
+            th, td { border: 1px solid #000 !important; color: black !important; }
+            
+            .print-header {
+                display: block !important;
+                text-align: center;
+                margin-bottom: 20px;
+            }
+            .print-header h2 { margin: 0; font-size: 24px; }
+            .print-header p { margin: 5px 0; font-size: 14px; color: #333; }
+        }
+
+        .print-header { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="print-header" id="printHeader">
+        <h2>密件公文領取清單報表</h2>
+        <p id="printRangeLabel">列印區間：全部紀錄</p>
+    </div>
+    
+    <header>
+        <h1>🔐 密件公文收文管理</h1>
+    </header>
+
+    <div class="input-card">
+        <div class="form-group">
+            <label>收文號 (10 碼)</label>
+            <input type="text" id="doc_id" maxlength="10" placeholder="例如: 1130001234" oninput="validateInput(this)">
+        </div>
+        <div class="form-group">
+            <label>職號</label>
+            <input type="text" id="job_number" placeholder="例如: 112005">
+        </div>
+        <div class="form-group">
+            <label>承辦人姓名</label>
+            <input type="text" id="assignee" placeholder="姓名">
+        </div>
+        <button id="submitBtn" class="btn-submit" onclick="submitDoc()" disabled>確認登錄</button>
+    </div>
+
+    <div class="toolbar">
+        <div class="filter-group">
+            <strong>📅 報表區間：</strong>
+            <input type="date" id="start_date" onchange="refreshList()">
+            <span>至</span>
+            <input type="date" id="end_date" onchange="refreshList()">
+            <button class="btn-reset" onclick="resetFilter()">重置</button>
+        </div>
+        <button class="btn-print" onclick="window.print()">🖨️ 列印此區間報表</button>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>收文號</th>
+                <th>職號</th>
+                <th>承辦人</th>
+                <th>登錄時間</th>
+                <th>狀態 / 領取時間</th>
+            </tr>
+        </thead>
+        <tbody id="docTableBody">
+            </tbody>
+    </table>
+</div>
+
+<script>
+    // 檢查收文號是否滿 10 碼才開啟按鈕
+    function validateInput(el) {
+        el.value = el.value.replace(/\D/g, ''); // 僅限數字
+        document.getElementById('submitBtn').disabled = (el.value.length !== 10);
+    }
+
+    // 提交公文資料
+    async function submitDoc() {
+        const doc_id = document.getElementById('doc_id').value;
+        const job_number = document.getElementById('job_number').value;
+        const assignee = document.getElementById('assignee').value;
+
+        if (!job_number || !assignee) return alert("請完整填寫職號與姓名");
+
+        const response = await fetch('/api/add_doc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ doc_id, job_number, assignee })
+        });
+
+        if (response.ok) {
+            document.getElementById('doc_id').value = '';
+            document.getElementById('job_number').value = '';
+            document.getElementById('assignee').value = '';
+            document.getElementById('submitBtn').disabled = true;
+            refreshList();
+        } else {
+            const err = await response.json();
+            alert("錯誤: " + err.message);
+        }
+    }
+
+    // 刷新公文列表（支援起迄日期篩選）
+    async function refreshList() {
+    const start = document.getElementById('start_date').value;
+    const end = document.getElementById('end_date').value;
+    const rangeLabel = document.getElementById('printRangeLabel');
+    
+    // 構建 URL
+    let url = '/api/doc_list';
+    const params = new URLSearchParams();
+    if (start) params.append('start', start);
+    if (end) params.append('end', end);
+    if (params.toString()) url += `?${params.toString()}`;
+
+    // --- 修改文字提示部分 ---
+    if (start && end) {
+        rangeLabel.innerText = `顯示區間：${start} 至 ${end} (包含已領取)`;
+    } else if (!start && !end) {
+        rangeLabel.innerText = `目前的狀態：顯示所有「待領取」公文`;
+    }
+    // ----------------------
+
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+        const tbody = document.getElementById('docTableBody');
+        
+        tbody.innerHTML = data.map(doc => `
+            <tr>
+                <td><strong>${doc.doc_id}</strong></td>
+                <td>${doc.job_number}</td>
+                <td>${doc.assignee}</td>
+                <td>${doc.login_time}</td>
+                <td>
+                    <span class="badge ${doc.is_collected ? 'status-done' : 'status-wait'}">
+                        ${doc.is_collected ? '✅ 已領取' : '⏳ 待簽收'}
+                    </span>
+                    <div style="font-size: 11px; color: #777; margin-top: 5px;">
+                        ${doc.is_collected ? '領取時間：' + doc.collection_time : ''}
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        console.error("載入失敗", e);
+    }
+}
+
+    // 重置篩選器
+    function resetFilter() {
+        document.getElementById('start_date').value = '';
+        document.getElementById('end_date').value = '';
+        refreshList();
+    }
+
+    // 每 10 秒自動刷新一次（避免影響手動篩選，時間設長一點）
+    setInterval(refreshList, 10000);
+    // 初始載入
+    refreshList();
+</script>
+
+</body>
+</html>
