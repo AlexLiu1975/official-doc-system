@@ -1,80 +1,94 @@
-import sqlite3
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import dj_database_url
 from flask import Flask, request, jsonify, render_template
 from datetime import datetime
-import os
 
 app = Flask(__name__)
 
-# --- 資料庫路徑優化 (適用於雲端部署) ---
-# 取得目前程式檔案所在的資料夾絕對路徑
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# 確保資料庫檔案會跟程式放在同一個資料夾下
-DB_NAME = os.path.join(BASE_DIR, "secret_official.sqlite")
-
-# --- 資料庫基礎設定 ---
+# --- 資料庫連線設定 ---
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
+    """從環境變數讀取 DATABASE_URL 並建立連線"""
+    # 在 Render 的 Environment Variables 必須設定 DATABASE_URL
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise ValueError("錯誤：找不到 DATABASE_URL 環境變數！")
+    
+    # 使用 psycopg2 連接，並設定回傳格式為字典 (RealDictCursor)
+    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
     return conn
 
 def init_db():
-    """初始化資料庫，確保包含所有必要欄位"""
+    """初始化 PostgreSQL 資料庫表格"""
     conn = get_db_connection()
-    conn.execute("""
+    cur = conn.cursor()
+    # PostgreSQL 語法優化：TIMESTAMP 與 VARCHAR
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS official_docs (
-            doc_id TEXT PRIMARY KEY,
-            assignee TEXT NOT NULL,
-            job_number TEXT NOT NULL,
-            login_time TEXT NOT NULL,
-            collection_time TEXT,
+            doc_id VARCHAR(20) PRIMARY KEY,
+            assignee VARCHAR(100) NOT NULL,
+            job_number VARCHAR(50) NOT NULL,
+            login_time TIMESTAMP NOT NULL,
+            collection_time TIMESTAMP,
             is_collected INTEGER DEFAULT 0
         );
     """)
     conn.commit()
+    cur.close()
     conn.close()
-    print(f"✅ 資料庫已就緒：{DB_NAME}")
+    print("✅ PostgreSQL 資料庫初始化成功！")
 
-# --- 網頁頁面路由 ---
+# --- 網頁路由 ---
 
 @app.route('/')
 def index():
-    """管理端首頁"""
     return render_template('doc_admin.html')
 
 @app.route('/collect')
 def collect_page():
-    """承辦人簽收頁面"""
     return render_template('user_collect.html')
 
 # --- API 介面 ---
 
 @app.route('/api/doc_list', methods=['GET'])
 def get_docs():
-    """取得公文清單：預設顯示『未領取』，若有日期則顯示『該區間全部』"""
+    """取得公文清單：支援日期區間篩選"""
     start_date = request.args.get('start')
     end_date = request.args.get('end')
     conn = get_db_connection()
+    cur = conn.cursor()
     
     if start_date and end_date:
-        # 顯示該區間內「所有」公文 (含已領取)
-        query = "SELECT * FROM official_docs WHERE login_time BETWEEN ? AND ? ORDER BY login_time DESC"
-        docs = conn.execute(query, (f"{start_date} 00:00:00", f"{end_date} 23:59:59")).fetchall()
+        # PostgreSQL 使用 %s 作為佔位符
+        query = "SELECT * FROM official_docs WHERE login_time >= %s AND login_time <= %s ORDER BY login_time DESC"
+        cur.execute(query, (f"{start_date} 00:00:00", f"{end_date} 23:59:59"))
     elif start_date:
-        # 若只有起始日：顯示該日後「所有」公文
-        query = "SELECT * FROM official_docs WHERE login_time >= ? ORDER BY login_time DESC"
-        docs = conn.execute(query, (f"{start_date} 00:00:00",)).fetchall()
+        query = "SELECT * FROM official_docs WHERE login_time >= %s ORDER BY login_time DESC"
+        cur.execute(query, (f"{start_date} 00:00:00",))
     else:
-        # 【預設模式】僅顯示「尚未領取」的公文
+        # 預設：僅顯示未領取
         query = "SELECT * FROM official_docs WHERE is_collected = 0 ORDER BY login_time DESC"
-        docs = conn.execute(query).fetchall()
+        cur.execute(query)
         
+    docs = cur.fetchall()
+    
+    # 處理回傳資料中的 datetime 物件轉為字串，以便 JSON 傳輸
+    result = []
+    for doc in docs:
+        d = dict(doc)
+        d['login_time'] = d['login_time'].strftime('%Y-%m-%d %H:%M:%S') if d['login_time'] else ""
+        d['collection_time'] = d['collection_time'].strftime('%Y-%m-%d %H:%M:%S') if d['collection_time'] else ""
+        result.append(d)
+
+    cur.close()
     conn.close()
-    return jsonify([dict(doc) for doc in docs])
+    return jsonify(result)
 
 @app.route('/api/add_doc', methods=['POST'])
 def add_doc():
-    """管理員登錄新公文"""
+    """登錄新公文"""
     try:
         data = request.json
         doc_id = data.get('doc_id')
@@ -83,64 +97,67 @@ def add_doc():
 
         if not doc_id or len(doc_id) != 10:
             return jsonify({'status': 'error', 'message': '收文號須為 10 碼'}), 400
-        if not assignee or not job_number:
-            return jsonify({'status': 'error', 'message': '姓名與職號不能空白'}), 400
 
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = datetime.now()
         conn = get_db_connection()
-        conn.execute(
-            "INSERT INTO official_docs (doc_id, assignee, job_number, login_time) VALUES (?, ?, ?, ?)",
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO official_docs (doc_id, assignee, job_number, login_time) VALUES (%s, %s, %s, %s)",
             (doc_id, assignee, job_number, now)
         )
         conn.commit()
+        cur.close()
         conn.close()
         return jsonify({'status': 'success'})
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
         return jsonify({'status': 'error', 'message': '此收文號已存在'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/collect_doc/<job_num>', methods=['POST'])
 def collect_action(job_num):
-    """簽收端：一鍵領取該職號名下所有待領公文"""
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    """簽收公文 (透過職號)"""
+    now = datetime.now()
     try:
         conn = get_db_connection()
-        # 1. 搜尋待領取清單
-        docs = conn.execute(
-            "SELECT doc_id, assignee FROM official_docs WHERE job_number = ? AND is_collected = 0", 
+        cur = conn.cursor()
+        
+        # 1. 檢查是否有待領公文
+        cur.execute(
+            "SELECT doc_id, assignee FROM official_docs WHERE job_number = %s AND is_collected = 0", 
             (job_num,)
-        ).fetchall()
+        )
+        docs = cur.fetchall()
 
         if docs:
             name = docs[0]['assignee']
             doc_list = [d['doc_id'] for d in docs]
             
-            # 2. 批量更新為已領取
-            conn.execute(
-                "UPDATE official_docs SET is_collected = 1, collection_time = ? WHERE job_number = ? AND is_collected = 0",
+            # 2. 更新狀態
+            cur.execute(
+                "UPDATE official_docs SET is_collected = 1, collection_time = %s WHERE job_number = %s AND is_collected = 0",
                 (now, job_num)
             )
             conn.commit()
+            cur.close()
             conn.close()
             
             return jsonify({
                 'status': 'success', 
                 'doc_ids': doc_list, 
                 'name': name, 
-                'time': now
+                'time': now.strftime('%Y-%m-%d %H:%M:%S')
             })
         else:
+            cur.close()
             conn.close()
-            return jsonify({'status': 'fail', 'message': '查無待領公文'}), 404
+            return jsonify({'status': 'fail', 'message': '目前無待領公文'}), 404
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# --- 啟動程式 (支援雲端 Port 抓取) ---
+# --- 啟動 ---
 
 if __name__ == '__main__':
     init_db()
-    # Render 等雲端平台會自動分配 PORT 環境變數
     port = int(os.environ.get("PORT", 5001))
-    # 關閉 debug=True 以提升正式環境效能
     app.run(host='0.0.0.0', port=port)
