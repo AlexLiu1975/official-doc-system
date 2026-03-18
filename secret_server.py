@@ -155,6 +155,13 @@ def collect_action(job_num):
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/debug/init')
+def force_init():
+    try:
+        init_db()
+        return "<h1>✅ 資料庫表格建置成功！</h1><p>請回首頁測試登錄功能。</p>"
+    except Exception as e:
+        return f"<h1>❌ 建置失敗</h1><p>錯誤：{str(e)}</p>"
 # --- 啟動 ---
 
 if __name__ == '__main__':
