@@ -4,7 +4,12 @@ from datetime import datetime
 import os
 
 app = Flask(__name__)
-DB_NAME = "secret_official.sqlite"
+
+# --- 資料庫路徑優化 (適用於雲端部署) ---
+# 取得目前程式檔案所在的資料夾絕對路徑
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 確保資料庫檔案會跟程式放在同一個資料夾下
+DB_NAME = os.path.join(BASE_DIR, "secret_official.sqlite")
 
 # --- 資料庫基礎設定 ---
 
@@ -28,7 +33,7 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-    print("✅ 密件公文資料庫連線成功且已初始化！")
+    print(f"✅ 資料庫已就緒：{DB_NAME}")
 
 # --- 網頁頁面路由 ---
 
@@ -52,7 +57,7 @@ def get_docs():
     conn = get_db_connection()
     
     if start_date and end_date:
-        # 當使用者選擇日期區間時：顯示該區間內「所有」公文 (方便印報表)
+        # 顯示該區間內「所有」公文 (含已領取)
         query = "SELECT * FROM official_docs WHERE login_time BETWEEN ? AND ? ORDER BY login_time DESC"
         docs = conn.execute(query, (f"{start_date} 00:00:00", f"{end_date} 23:59:59")).fetchall()
     elif start_date:
@@ -60,7 +65,7 @@ def get_docs():
         query = "SELECT * FROM official_docs WHERE login_time >= ? ORDER BY login_time DESC"
         docs = conn.execute(query, (f"{start_date} 00:00:00",)).fetchall()
     else:
-        # 【預設】顯示所有「尚未領取」的公文
+        # 【預設模式】僅顯示「尚未領取」的公文
         query = "SELECT * FROM official_docs WHERE is_collected = 0 ORDER BY login_time DESC"
         docs = conn.execute(query).fetchall()
         
@@ -69,7 +74,7 @@ def get_docs():
 
 @app.route('/api/add_doc', methods=['POST'])
 def add_doc():
-    """登錄新公文"""
+    """管理員登錄新公文"""
     try:
         data = request.json
         doc_id = data.get('doc_id')
@@ -91,17 +96,17 @@ def add_doc():
         conn.close()
         return jsonify({'status': 'success'})
     except sqlite3.IntegrityError:
-        return jsonify({'status': 'error', 'message': '此收文號已存在於資料庫'}), 400
+        return jsonify({'status': 'error', 'message': '此收文號已存在'}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/collect_doc/<job_num>', methods=['POST'])
 def collect_action(job_num):
-    """透過職號領取該承辦人名下『所有』待領公文"""
+    """簽收端：一鍵領取該職號名下所有待領公文"""
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         conn = get_db_connection()
-        # 1. 找出該職號名下所有尚未領取的公文
+        # 1. 搜尋待領取清單
         docs = conn.execute(
             "SELECT doc_id, assignee FROM official_docs WHERE job_number = ? AND is_collected = 0", 
             (job_num,)
@@ -109,9 +114,9 @@ def collect_action(job_num):
 
         if docs:
             name = docs[0]['assignee']
-            doc_list = [d['doc_id'] for d in docs] # 提取所有收文號
+            doc_list = [d['doc_id'] for d in docs]
             
-            # 2. 批量更新狀態為已領取
+            # 2. 批量更新為已領取
             conn.execute(
                 "UPDATE official_docs SET is_collected = 1, collection_time = ? WHERE job_number = ? AND is_collected = 0",
                 (now, job_num)
@@ -119,24 +124,23 @@ def collect_action(job_num):
             conn.commit()
             conn.close()
             
-            # 3. 回傳資料供前端顯示
             return jsonify({
                 'status': 'success', 
                 'doc_ids': doc_list, 
                 'name': name, 
-                'time': now,
-                'count': len(doc_list)
+                'time': now
             })
         else:
             conn.close()
-            return jsonify({'status': 'fail', 'message': '目前查無此職號之待領公文'}), 404
+            return jsonify({'status': 'fail', 'message': '查無待領公文'}), 404
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# --- 啟動程式 ---
+# --- 啟動程式 (支援雲端 Port 抓取) ---
 
 if __name__ == '__main__':
     init_db()
-    # 使用 5001 埠號避開 macOS 預設佔用的 5000 埠
-    # debug=True 會在修改後自動重啟伺服器
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    # Render 等雲端平台會自動分配 PORT 環境變數
+    port = int(os.environ.get("PORT", 5001))
+    # 關閉 debug=True 以提升正式環境效能
+    app.run(host='0.0.0.0', port=port)
