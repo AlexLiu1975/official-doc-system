@@ -178,6 +178,7 @@ def force_init():
 # --- 啟動 ---
 
 if __name__ == '__main__':
-    init_db()
-    port = int(os.environ.get("PORT", 5001))
+    # 這裡最關鍵：讀取 Render 提供的 PORT，預設為 10000
+    port = int(os.environ.get("PORT", 10000))
+    # 必須監聽 0.0.0.0 才能讓外部連線進來
     app.run(host='0.0.0.0', port=port)
