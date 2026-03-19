@@ -1,24 +1,21 @@
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import dj_database_url
 from flask import Flask, request, jsonify, render_template
 from datetime import datetime
-
+import time
+    
 app = Flask(__name__)
-
 # --- 資料庫連線設定 ---
 
 def get_db_connection():
-    """從環境變數讀取 DATABASE_URL 並建立連線"""
-    # 在 Render 的 Environment Variables 必須設定 DATABASE_URL
+    # 這裡填入 Supabase 的連線字串
     db_url = os.environ.get("DATABASE_URL")
-    if not db_url:
-        raise ValueError("錯誤：找不到 DATABASE_URL 環境變數！")
-    
-    # 使用 psycopg2 連接，並設定回傳格式為字典 (RealDictCursor)
+    # 建議在環境變數網址後加上 ?sslmode=require
     conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
     return conn
+
+
 
 def init_db():
     """初始化 PostgreSQL 資料庫表格"""
@@ -155,13 +152,29 @@ def collect_action(job_num):
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# 記得保留這個 debug 路由，第一次連上 Supabase 時要跑一次建表
 @app.route('/debug/init')
 def force_init():
     try:
-        init_db()
-        return "<h1>✅ 資料庫表格建置成功！</h1><p>請回首頁測試登錄功能。</p>"
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS official_docs (
+                doc_id VARCHAR(20) PRIMARY KEY,
+                assignee VARCHAR(100) NOT NULL,
+                job_number VARCHAR(50) NOT NULL,
+                login_time TIMESTAMP NOT NULL,
+                collection_time TIMESTAMP,
+                is_collected INTEGER DEFAULT 0
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        return "<h1>✅ Supabase 資料庫初始化成功！</h1>"
     except Exception as e:
-        return f"<h1>❌ 建置失敗</h1><p>錯誤：{str(e)}</p>"
+        return f"<h1>❌ 失敗</h1><p>{str(e)}</p>"
+
 # --- 啟動 ---
 
 if __name__ == '__main__':
